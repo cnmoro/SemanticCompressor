@@ -1,0 +1,6 @@
+numpy<2
+nltk
+scikit-learn
+fasttext
+onnxruntime
+onnxruntime-extensions

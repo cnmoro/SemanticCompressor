@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0", "numpy<2", "nltk", "scikit-learn", "fasttext", "onnxruntime", "onnxruntime-extensions"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semantic_compressor"
+version = "1.1"
+authors = [
+  { name="Carlo Moro", email="cnmoro@gmail.com" },
+]
+description = ""
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy<2",
+    "nltk",
+    "scikit-learn",
+    "fasttext",
+    "onnxruntime",
+    "onnxruntime-extensions"
+]
