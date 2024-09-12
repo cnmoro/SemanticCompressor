@@ -213,8 +213,6 @@ def compress_text(text, *, target_token_count=None, compression_rate=0.7, refere
     try:
         if target_token_count is None:
             compression_rate = 1 - compression_rate
-            original_token_count = count_tokens(text)
-            target_token_count = int(original_token_count * compression_rate)
         else:
             original_token_count = count_tokens(text)
             if original_token_count <= target_token_count:
@@ -233,8 +231,9 @@ def compress_text(text, *, target_token_count=None, compression_rate=0.7, refere
     return text
 
 def find_needle_in_haystack(
-        *, haystack: str, needle: str, block_size = 350,
-        semantic_embeddings_weight: float = 0.3, textual_embeddings_weight: float = 0.7
+        *, haystack: str, needle: str, block_size = 300,
+        semantic_embeddings_weight: float = 0.3,
+        textual_embeddings_weight: float = 0.7
     ):
     """
     Finds the string block in the haystack that contains the needle.
@@ -275,7 +274,9 @@ def find_needle_in_haystack(
         # Find the index of the needle in all the blocks
         most_similar_block_index = blocks.index(most_similar_block)
 
-        needle_region = blocks[most_similar_block_index-1:most_similar_block_index+2]
+        start_index = most_similar_block_index-1 if most_similar_block_index > 0 else 0
+
+        needle_region = blocks[start_index:most_similar_block_index+2]
 
         return ''.join(needle_region).strip()
     except Exception:
