@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='semantic_compressor',
-    version='1.3',
+    version='1.4',
     author='Carlo Moro',
     author_email='cnmoro@gmail.com',
     description="Semantic text compression",
@@ -17,7 +17,8 @@ setup(
         "scikit-learn",
         "fasttext",
         "onnxruntime",
-        "onnxruntime-extensions"
+        "onnxruntime-extensions",
+        "pyspellchecker"
     ],
     classifiers=[
         'Programming Language :: Python :: 3',

@@ -6,13 +6,23 @@ from onnxruntime_extensions import get_library_path
 from compressor.minbpe.regex import RegexTokenizer
 from nltk.tokenize import sent_tokenize
 from multiprocessing import cpu_count
+from spellchecker import SpellChecker
+from nltk.stem import PorterStemmer
+from nltk.stem import RSLPStemmer
 from collections import Counter
 import onnxruntime as ort
+import nltk
+
+# Inicializando os stemmers
+stemmer_english = PorterStemmer()
+stemmer_portuguese = RSLPStemmer()
 
 tokenizer = RegexTokenizer()
 nltk_data_path = str(importlib.resources.files('compressor').joinpath('resources/nltk_data'))
 
 os.environ['NLTK_DATA'] = nltk_data_path
+
+nltk.download('rslp')
 
 english_stopwords_path = str(importlib.resources.files('compressor').joinpath('resources/en_stopwords.pkl'))
 portuguese_stopwords_path = str(importlib.resources.files('compressor').joinpath('resources/pt_stopwords.pkl'))
@@ -230,10 +240,28 @@ def compress_text(text, *, target_token_count=None, compression_rate=0.7, refere
 
     return text
 
+def stem_text(text, lang='en'):
+    if lang == 'en':
+        stems = [stemmer_english.stem(word) for word in text.split()]
+        stemmed_text = " ".join(stems)
+    else:
+        stems = [stemmer_portuguese.stem(word) for word in text.split()]
+        stemmed_text = " ".join(stems)
+
+    return stemmed_text
+
+def correct_spelling(frase, detected_lang="pt"):
+    spell = SpellChecker(language=detected_lang)
+    words = frase.split()
+    fixed = [spell.correction(word) for word in words]
+    return " ".join(fixed)
+
 def find_needle_in_haystack(
         *, haystack: str, needle: str, block_size = 300,
         semantic_embeddings_weight: float = 0.3,
-        textual_embeddings_weight: float = 0.7
+        textual_embeddings_weight: float = 0.7,
+        use_stemming: bool = False,
+        correct_spelling_needle: bool = False
     ):
     """
     Finds the string block in the haystack that contains the needle.
@@ -244,7 +272,9 @@ def find_needle_in_haystack(
         block_size (int, optional): The size of each string block. The needle will be searched in each block. Defaults to 350.
         semantic_embeddings_weight (float, optional): The weight of the semantic embeddings in the similarity calculation. Defaults to 0.3.
         textual_embeddings_weight (float, optional): The weight of the textual embeddings in the similarity calculation. Defaults to 0.7.
-
+        use_stemming (bool, optional): Whether to use stemming for the text. Defaults to False.
+        correct_spelling_needle (bool, optional): Whether to correct the spelling of the needle. Defaults to False.
+        
     Returns:
         str: The string block in the haystack that contains the needle. The size of the needle will be less than or equal to the block size.
     """
@@ -252,14 +282,19 @@ def find_needle_in_haystack(
     try:
         # Split the haystack into blocks
         blocks = structurize_text(haystack, tokens_per_chunk=block_size)
+
+        lang = detect_language(f"{needle}\n\n{haystack}")
+        
+        if correct_spelling_needle:
+            needle = correct_spelling(needle, lang)
         
         # Compute the embeddings of the needle
         needle_semantic_embedding = extract_semantic_embeddings(needle)
-        needle_textual_embedding = extract_textual_embeddings(needle.lower())
+        needle_textual_embedding = extract_textual_embeddings(needle.lower() if not use_stemming else stem_text(needle, lang))
 
         # Compute the embeddings of the haystack (each block)
         haystack_semantic_embeddings = [extract_semantic_embeddings(block) for block in blocks]
-        haystack_textual_embeddings = [extract_textual_embeddings(block.lower()) for block in blocks]
+        haystack_textual_embeddings = [extract_textual_embeddings(block.lower() if not use_stemming else stem_text(block.lower(), lang)) for block in blocks]
 
         # Compute the similarity between the needle and each block
         semantic_similarities = [calculate_similarity(needle_semantic_embedding, block_embedding) for block_embedding in haystack_semantic_embeddings]
