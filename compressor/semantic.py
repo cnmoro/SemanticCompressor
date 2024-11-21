@@ -250,11 +250,18 @@ def stem_text(text, lang='en'):
 
     return stemmed_text
 
-def correct_spelling(frase, detected_lang="pt"):
+def correct_spelling(sentence, detected_lang="pt"):
     spell = SpellChecker(language=detected_lang)
-    words = frase.split()
+    words = sentence.split()
     fixed = [spell.correction(word) for word in words]
-    return " ".join(fixed)
+
+    final_words = []
+
+    # Interpolate original words with fixed words (each word could be "None" in "fixed" when no correction is needed)
+    for original, fixed_word in zip(words, fixed):
+        final_words.append(fixed_word if fixed_word is not None else original)
+
+    return " ".join(final_words)
 
 def find_needle_in_haystack(
         *, haystack: str, needle: str, block_size = 300,
