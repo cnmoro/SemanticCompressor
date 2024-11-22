@@ -4,6 +4,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.metrics.pairwise import cosine_similarity
 from onnxruntime_extensions import get_library_path
 from compressor.minbpe.regex import RegexTokenizer
+from concurrent.futures import ProcessPoolExecutor
 from nltk.tokenize import sent_tokenize
 from multiprocessing import cpu_count
 from spellchecker import SpellChecker
@@ -31,7 +32,7 @@ english_stopwords = pickle.load(open(english_stopwords_path, "rb"))
 portuguese_stopwords = pickle.load(open(portuguese_stopwords_path, "rb"))
 langdetect_model = fasttext.load_model(fasttext_model_path)
 
-embedding_model_cpu_count = os.environ.get('EMBEDDING_MODEL_CPU_COUNT', cpu_count() - 1)
+embedding_model_cpu_count = os.environ.get('EMBEDDING_MODEL_CPU_COUNT', 1)
 
 _options = ort.SessionOptions()
 _options.inter_op_num_threads, _options.intra_op_num_threads = embedding_model_cpu_count, embedding_model_cpu_count
@@ -263,8 +264,25 @@ def correct_spelling(sentence, detected_lang="pt"):
 
     return " ".join(final_words)
 
+def preprocess_and_extract_textual_embedding(block, use_stemming, lang):
+    """
+    Preprocesses a block (lowercasing and stemming if required) and extracts textual embeddings.
+
+    Args:
+        block (str): The text block to process.
+        use_stemming (bool): Whether to apply stemming.
+        lang (str): Language of the text for stemming.
+
+    Returns:
+        np.array: The textual embedding of the processed block.
+    """
+    processed_block = block.lower() if not use_stemming else stem_text(block.lower(), lang)
+    return extract_textual_embeddings(processed_block)
+
+
 def find_needle_in_haystack(
-        *, haystack: str, needle: str, block_size = 300,
+        *, haystack: str, needle: str, block_size=300,
+        embedding_mode: str = 'both',  # 'semantic', 'textual', or 'both'
         semantic_embeddings_weight: float = 0.3,
         textual_embeddings_weight: float = 0.7,
         use_stemming: bool = False,
@@ -277,16 +295,21 @@ def find_needle_in_haystack(
         haystack (str): The haystack string.
         needle (str): The needle string.
         block_size (int, optional): The size of each string block. The needle will be searched in each block. Defaults to 350.
+        embedding_mode (str, optional): The embedding type to use: 'semantic', 'textual', or 'both'. Defaults to 'both'.
         semantic_embeddings_weight (float, optional): The weight of the semantic embeddings in the similarity calculation. Defaults to 0.3.
         textual_embeddings_weight (float, optional): The weight of the textual embeddings in the similarity calculation. Defaults to 0.7.
         use_stemming (bool, optional): Whether to use stemming for the text. Defaults to False.
         correct_spelling_needle (bool, optional): Whether to correct the spelling of the needle. Defaults to False.
-        
+
     Returns:
         str: The string block in the haystack that contains the needle. The size of the needle will be less than or equal to the block size.
     """
     
     try:
+        # Validate embedding_mode
+        if embedding_mode not in {'semantic', 'textual', 'both'}:
+            raise ValueError("Invalid embedding_mode. Choose 'semantic', 'textual', or 'both'.")
+        
         # Split the haystack into blocks
         blocks = structurize_text(haystack, tokens_per_chunk=block_size)
 
@@ -295,30 +318,69 @@ def find_needle_in_haystack(
         if correct_spelling_needle:
             needle = correct_spelling(needle, lang)
         
-        # Compute the embeddings of the needle
-        needle_semantic_embedding = extract_semantic_embeddings(needle)
-        needle_textual_embedding = extract_textual_embeddings(needle.lower() if not use_stemming else stem_text(needle, lang))
+        # Compute the embeddings of the needle based on the embedding mode
+        needle_semantic_embedding = None
+        needle_textual_embedding = None
 
+        if embedding_mode in {'semantic', 'both'}:
+            needle_semantic_embedding = extract_semantic_embeddings(needle)
+        
+        if embedding_mode in {'textual', 'both'}:
+            needle_textual_embedding = extract_textual_embeddings(
+                needle.lower() if not use_stemming else stem_text(needle, lang)
+            )
+        
         # Compute the embeddings of the haystack (each block)
-        haystack_semantic_embeddings = [extract_semantic_embeddings(block) for block in blocks]
-        haystack_textual_embeddings = [extract_textual_embeddings(block.lower() if not use_stemming else stem_text(block.lower(), lang)) for block in blocks]
+        haystack_semantic_embeddings = []
+        haystack_textual_embeddings = []
 
-        # Compute the similarity between the needle and each block
-        semantic_similarities = [calculate_similarity(needle_semantic_embedding, block_embedding) for block_embedding in haystack_semantic_embeddings]
-        textual_similarities = [calculate_similarity(needle_textual_embedding, block_embedding) for block_embedding in haystack_textual_embeddings]
+        if embedding_mode in {'semantic', 'both'}:
+            with ProcessPoolExecutor() as executor:
+                haystack_semantic_embeddings = list(executor.map(extract_semantic_embeddings, blocks))
+        
+        if embedding_mode in {'textual', 'both'}:
+            with ProcessPoolExecutor(max_workers=cpu_count()//1.5) as executor:
+                haystack_textual_embeddings = list(
+                    executor.map(preprocess_and_extract_textual_embedding, blocks, [use_stemming]*len(blocks), [lang]*len(blocks))
+                )
+        
+        # Compute similarities based on the embedding mode
+        semantic_similarities = []
+        textual_similarities = []
 
-        # Sort the blocks by similarity, using the weighted average of semantic and textual similarity
-        sorted_blocks = sorted(zip(blocks, semantic_similarities, textual_similarities), key=lambda x: x[1] * semantic_embeddings_weight + x[2] * textual_embeddings_weight, reverse=True)
+        if embedding_mode in {'semantic', 'both'}:
+            semantic_similarities = [
+                calculate_similarity(needle_semantic_embedding, block_embedding)
+                for block_embedding in haystack_semantic_embeddings
+            ]
+        
+        if embedding_mode in {'textual', 'both'}:
+            textual_similarities = [
+                calculate_similarity(needle_textual_embedding, block_embedding)
+                for block_embedding in haystack_textual_embeddings
+            ]
 
+        # Calculate the overall similarity score
+        if embedding_mode == 'semantic':
+            sorted_blocks = sorted(zip(blocks, semantic_similarities), key=lambda x: x[1], reverse=True)
+        elif embedding_mode == 'textual':
+            sorted_blocks = sorted(zip(blocks, textual_similarities), key=lambda x: x[1], reverse=True)
+        else:  # both
+            sorted_blocks = sorted(
+                zip(blocks, semantic_similarities, textual_similarities),
+                key=lambda x: x[1] * semantic_embeddings_weight + x[2] * textual_embeddings_weight,
+                reverse=True
+            )
+        
         # The most similar block is the one that contains the needle
         most_similar_block = sorted_blocks[0][0]
 
         # Find the index of the needle in all the blocks
         most_similar_block_index = blocks.index(most_similar_block)
 
-        start_index = most_similar_block_index-1 if most_similar_block_index > 0 else 0
+        start_index = most_similar_block_index - 1 if most_similar_block_index > 0 else 0
 
-        needle_region = blocks[start_index:most_similar_block_index+2]
+        needle_region = blocks[start_index:most_similar_block_index + 2]
 
         return ''.join(needle_region).strip()
     except Exception:
