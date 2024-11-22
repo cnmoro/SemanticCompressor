@@ -13,16 +13,16 @@ from collections import Counter
 import onnxruntime as ort
 import nltk
 
-# Inicializando os stemmers
-stemmer_english = PorterStemmer()
-stemmer_portuguese = RSLPStemmer()
-
 tokenizer = RegexTokenizer()
 nltk_data_path = str(importlib.resources.files('compressor').joinpath('resources/nltk_data'))
 
 os.environ['NLTK_DATA'] = nltk_data_path
 
 nltk.download('rslp')
+
+# Inicializando os stemmers
+stemmer_english = PorterStemmer()
+stemmer_portuguese = RSLPStemmer()
 
 english_stopwords_path = str(importlib.resources.files('compressor').joinpath('resources/en_stopwords.pkl'))
 portuguese_stopwords_path = str(importlib.resources.files('compressor').joinpath('resources/pt_stopwords.pkl'))
