@@ -2,7 +2,6 @@ from sklearn.feature_extraction.text import CountVectorizer, HashingVectorizer
 import numpy as np, pickle, fasttext, os, traceback, importlib
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.metrics.pairwise import cosine_similarity
-from onnxruntime_extensions import get_library_path
 from compressor.minbpe.regex import RegexTokenizer
 from concurrent.futures import ProcessPoolExecutor
 from nltk.tokenize import sent_tokenize
@@ -11,7 +10,7 @@ from spellchecker import SpellChecker
 from nltk.stem import PorterStemmer
 from nltk.stem import RSLPStemmer
 from collections import Counter
-import onnxruntime as ort
+from model2vec import StaticModel
 import nltk
 
 tokenizer = RegexTokenizer()
@@ -32,18 +31,7 @@ english_stopwords = pickle.load(open(english_stopwords_path, "rb"))
 portuguese_stopwords = pickle.load(open(portuguese_stopwords_path, "rb"))
 langdetect_model = fasttext.load_model(fasttext_model_path)
 
-embedding_model_cpu_count = os.environ.get('EMBEDDING_MODEL_CPU_COUNT', 1)
-
-_options = ort.SessionOptions()
-_options.inter_op_num_threads, _options.intra_op_num_threads = embedding_model_cpu_count, embedding_model_cpu_count
-_options.register_custom_ops_library(get_library_path())
-_providers = ["CPUExecutionProvider"]
-
-embedding_model = ort.InferenceSession(
-    path_or_bytes = str(importlib.resources.files('compressor').joinpath('resources/embedding_model.onnx')),
-    sess_options=_options,
-    providers=_providers
-)
+embedding_model = StaticModel.from_pretrained("cnmoro/multilingual-e5-small-distilled-16m")
 
 hashing_vectorizer = HashingVectorizer(ngram_range=(1, 6), analyzer='char', n_features=512)
 
@@ -54,7 +42,7 @@ def extract_textual_embeddings(text):
     return fixed_size_matrix.tolist()
 
 def extract_semantic_embeddings(text):
-    return embedding_model.run(output_names=["outputs"], input_feed={"inputs": [text]})[0][0]
+    return embedding_model.encode([text])[0]
 
 def structurize_text(full_text, tokens_per_chunk=300, chunk_overlap=0):
     chunks = []
@@ -339,7 +327,7 @@ def find_needle_in_haystack(
                 haystack_semantic_embeddings = list(executor.map(extract_semantic_embeddings, blocks))
         
         if embedding_mode in {'textual', 'both'}:
-            with ProcessPoolExecutor(max_workers=cpu_count()//1.5) as executor:
+            with ProcessPoolExecutor(max_workers=int(cpu_count()//1.5)) as executor:
                 haystack_textual_embeddings = list(
                     executor.map(preprocess_and_extract_textual_embedding, blocks, [use_stemming]*len(blocks), [lang]*len(blocks))
                 )
