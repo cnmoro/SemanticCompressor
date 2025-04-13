@@ -1,9 +1,12 @@
+import os, importlib
+os.environ['NLTK_DATA'] = str(importlib.resources.files('compressor').joinpath('resources/nltk_data'))
+
 from sklearn.feature_extraction.text import CountVectorizer, HashingVectorizer
-import numpy as np, pickle, fasttext, os, traceback, importlib
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.metrics.pairwise import cosine_similarity
 from compressor.minbpe.regex import RegexTokenizer
 from concurrent.futures import ProcessPoolExecutor
+import numpy as np, pickle, fasttext, traceback
 from nltk.tokenize import sent_tokenize
 from multiprocessing import cpu_count
 from spellchecker import SpellChecker
@@ -11,14 +14,8 @@ from nltk.stem import PorterStemmer
 from nltk.stem import RSLPStemmer
 from collections import Counter
 from model2vec import StaticModel
-import nltk
 
 tokenizer = RegexTokenizer()
-nltk_data_path = str(importlib.resources.files('compressor').joinpath('resources/nltk_data'))
-
-os.environ['NLTK_DATA'] = nltk_data_path
-
-nltk.download('rslp')
 
 # Inicializando os stemmers
 stemmer_english = PorterStemmer()
@@ -31,7 +28,7 @@ english_stopwords = pickle.load(open(english_stopwords_path, "rb"))
 portuguese_stopwords = pickle.load(open(portuguese_stopwords_path, "rb"))
 langdetect_model = fasttext.load_model(fasttext_model_path)
 
-embedding_model = StaticModel.from_pretrained("cnmoro/multilingual-e5-small-distilled-16m")
+embedding_model = StaticModel.from_pretrained("minishlab/potion-base-2M")
 
 hashing_vectorizer = HashingVectorizer(ngram_range=(1, 6), analyzer='char', n_features=512)
 

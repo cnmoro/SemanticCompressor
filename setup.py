@@ -2,13 +2,13 @@ from setuptools import setup, find_packages
 
 setup(
     name='semantic_compressor',
-    version='1.9',
+    version='2.0',
     author='Carlo Moro',
     author_email='cnmoro@gmail.com',
     description="Semantic text compression",
     packages=find_packages(),
     package_data={
-        "compressor": ["resources/*"]
+        "compressor": ["resources/**/*"]
     },
     include_package_data=True,
     install_requires=[
