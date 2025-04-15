@@ -1,4 +1,4 @@
-import os, importlib
+import os, importlib.resources
 os.environ['NLTK_DATA'] = str(importlib.resources.files('compressor').joinpath('resources/nltk_data'))
 
 from sklearn.feature_extraction.text import CountVectorizer, HashingVectorizer
