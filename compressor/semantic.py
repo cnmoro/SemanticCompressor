@@ -14,6 +14,7 @@ from nltk.stem import PorterStemmer
 from nltk.stem import RSLPStemmer
 from collections import Counter
 from model2vec import StaticModel
+import re
 
 tokenizer = RegexTokenizer()
 
@@ -31,6 +32,35 @@ langdetect_model = fasttext.load_model(fasttext_model_path)
 embedding_model = StaticModel.from_pretrained("minishlab/potion-base-2M")
 
 hashing_vectorizer = HashingVectorizer(ngram_range=(1, 6), analyzer='char', n_features=512)
+
+def clean_text(text: str) -> str:
+    # 1) Fix hyphenation at line breaks
+    text = re.sub(r'(\w)-\s*\n\s*(\w)', r'\1\2', text)
+    # 2) Strip stray pipes, bullets, brackets, quotes, unmatched parens
+    text = re.sub(r'[\|\•\[\]\(\)\"“”]', ' ', text)
+    # 3) Remove leading list hyphens
+    text = re.sub(r'(?m)^\s*-\s*', '', text)
+    # 4) Remove hyphens not between letters
+    text = re.sub(r'(?<!\w)-(?!\w)', ' ', text)
+    # 5) Collapse repeated punctuation
+    text = re.sub(r'([!?.,;:]){2,}', r'\1', text)
+    # 6) Normalize whitespace
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{2,}', '\n', text).strip()
+
+    # 7) Aggressive cleanup if >20% noise, but keep basic punctuation
+    alpha_ratio = sum(c.isalpha() for c in text) / max(len(text), 1)
+    if alpha_ratio < 0.8:
+        text = re.sub(r'[^A-Za-zÀ-ÿ\s\.\,\;\:\?\!]', ' ', text)
+        text = re.sub(r'\s{2,}', ' ', text).strip()
+
+    # 8) Reattach punctuation to preceding word and normalize post-punct spacing
+    #    "word ." → "word."
+    text = re.sub(r'\s+([\.!,\?;:])', r'\1', text)
+    #    "word.Next" → "word. Next"
+    text = re.sub(r'([\.!,\?;:])(?=\S)', r'\1 ', text)
+
+    return text
 
 def extract_textual_embeddings(text):
     X = hashing_vectorizer.fit_transform([text])
@@ -100,7 +130,7 @@ def compute_and_remove_repeated_ngrams(text, ngram_size=3, threshold=3):
 def calculate_similarity(embed1, embed2):
     return cosine_similarity([embed1], [embed2])[0][0]
 
-def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, reference_text: str = None):
+def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, reference_text: str = None, perform_cleaning: bool = True):
     def create_lda_model(texts, stopwords):
         vectorizer = CountVectorizer(stop_words=stopwords)
         doc_term_matrix = vectorizer.fit_transform(texts)
@@ -129,6 +159,9 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
         return importance
 
     try:
+        if perform_cleaning:
+            full_text = clean_text(full_text)
+        
         # Split the text into sentences
         sentences = sent_tokenize(full_text)
 
@@ -192,7 +225,7 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
     
     return full_text
 
-def compress_text(text, *, target_token_count=None, compression_rate=0.7, reference_text_steering=None):
+def compress_text(text, *, target_token_count=None, compression_rate=0.7, reference_text_steering=None, perform_cleaning=True):
     """
     Compress text using either a compression rate or a target token count.
     If both are provided, the compression rate will be used.
@@ -219,7 +252,8 @@ def compress_text(text, *, target_token_count=None, compression_rate=0.7, refere
         return semantic_compress_text(
             full_text = text,
             compression_rate = compression_rate,
-            reference_text = reference_text_steering
+            reference_text = reference_text_steering,
+            perform_cleaning = perform_cleaning
         )
     except Exception:
         traceback.print_exc()
