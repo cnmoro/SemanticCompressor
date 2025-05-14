@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='semantic_compressor',
-    version='2.3',
+    version='2.4',
     author='Carlo Moro',
     author_email='cnmoro@gmail.com',
     description="Semantic text compression",

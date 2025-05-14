@@ -29,7 +29,7 @@ english_stopwords = pickle.load(open(english_stopwords_path, "rb"))
 portuguese_stopwords = pickle.load(open(portuguese_stopwords_path, "rb"))
 langdetect_model = fasttext.load_model(fasttext_model_path)
 
-embedding_model = StaticModel.from_pretrained("minishlab/potion-base-2M")
+embedding_model = StaticModel.from_pretrained("cnmoro/Linq-Embed-Mistral-Distilled")
 
 hashing_vectorizer = HashingVectorizer(ngram_range=(1, 6), analyzer='char', n_features=512)
 
