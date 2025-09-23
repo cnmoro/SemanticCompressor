@@ -6,7 +6,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.metrics.pairwise import cosine_similarity
 from compressor.minbpe.regex import RegexTokenizer
 from concurrent.futures import ProcessPoolExecutor
-import numpy as np, pickle, fasttext, traceback
+import numpy as np, pickle, traceback
 from nltk.tokenize import sent_tokenize
 from multiprocessing import cpu_count
 from spellchecker import SpellChecker
@@ -16,6 +16,10 @@ from collections import Counter
 from model2vec import StaticModel
 import re
 
+from lingua import Language, LanguageDetectorBuilder
+languages = [Language.ENGLISH, Language.PORTUGUESE]
+lang_detector = LanguageDetectorBuilder.from_languages(*languages).build()
+
 tokenizer = RegexTokenizer()
 
 # Inicializando os stemmers
@@ -24,10 +28,8 @@ stemmer_portuguese = RSLPStemmer()
 
 english_stopwords_path = str(importlib.resources.files('compressor').joinpath('resources/en_stopwords.pkl'))
 portuguese_stopwords_path = str(importlib.resources.files('compressor').joinpath('resources/pt_stopwords.pkl'))
-fasttext_model_path = str(importlib.resources.files('compressor').joinpath('resources/lid.176.ftz'))
 english_stopwords = pickle.load(open(english_stopwords_path, "rb"))
 portuguese_stopwords = pickle.load(open(portuguese_stopwords_path, "rb"))
-langdetect_model = fasttext.load_model(fasttext_model_path)
 
 embedding_model = StaticModel.from_pretrained("cnmoro/static-nomic-eng-ptbr-tiny")
 
@@ -91,8 +93,8 @@ def count_tokens(text):
     return len(tokenizer.encode(text))
 
 def detect_language(text):
-    detected_lang = langdetect_model.predict(text.replace('\n', ' '), k=1)[0][0]
-    return 'pt' if (str(detected_lang) == '__label__pt' or str(detected_lang) == 'portuguese') else 'en'
+    detected_lang = lang_detector.detect_language_of(text)
+    return 'pt' if detected_lang == Language.PORTUGUESE else 'en'
 
 def compute_and_remove_repeated_ngrams(text, ngram_size=3, threshold=3):
     words = text.split()

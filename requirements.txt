@@ -1,6 +1,6 @@
 numpy<2
 nltk
 scikit-learn
-fasttext
+lingua-language-detector
 model2vec
 pyspellchecker

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "numpy<2", "nltk", "scikit-learn", "fasttext", "onnxruntime", "onnxruntime-extensions", "pyspellchecker"]
+requires = ["setuptools>=61.0", "numpy<2", "nltk", "scikit-learn", "lingua-language-detector", "onnxruntime", "onnxruntime-extensions", "pyspellchecker"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "semantic_compressor"
-version = "2.41"
+version = "2.42"
 authors = [
   { name="Carlo Moro", email="cnmoro@gmail.com" },
 ]
@@ -20,7 +20,7 @@ dependencies = [
     "numpy<2",
     "nltk",
     "scikit-learn",
-    "fasttext",
+    "lingua-language-detector",
     "model2vec",
     "pyspellchecker"
 ]
