@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='semantic_compressor',
-    version='2.42',
+    version='2.43',
     author='Carlo Moro',
     author_email='cnmoro@gmail.com',
     description="Semantic text compression",
@@ -12,7 +12,7 @@ setup(
     },
     include_package_data=True,
     install_requires=[
-        "numpy<2",
+        "numpy",
         "nltk",
         "scikit-learn",
         "lingua-language-detector",

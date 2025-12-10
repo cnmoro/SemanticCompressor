@@ -1,4 +1,4 @@
-numpy<2
+numpy
 nltk
 scikit-learn
 lingua-language-detector
