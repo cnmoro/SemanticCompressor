@@ -9,6 +9,8 @@ except Exception:
 os.environ['NLTK_DATA'] = _NLTK_DATA_PATH
 
 from collections import Counter
+from itertools import cycle
+from sklearn.metrics.pairwise import cosine_similarity
 
 _PUNCT_REATTACH = re.compile(r'\s+([.!,\?;:])')
 _PUNCT_BOUNDARY = re.compile(r'([.!,\?;:])(?=\S)')
@@ -19,11 +21,98 @@ _STRAY_HYPHEN = re.compile(r'(?<!\w)-(?!\w)')
 _REPEATED_PUNCT = re.compile(r'([!?.,;:]){2,}')
 _MULTI_SPACE = re.compile(r'[ \t]+')
 _MULTI_NEWLINE = re.compile(r'\n{2,}')
-_AGGRESSIVE_CLEAN = re.compile(r'[^A-Za-zÀ-ÿ\s\.\,\;\:\?\!]')
+_AGGRESSIVE_CLEAN = re.compile(r"[^A-Za-zÀ-ÿ0-9\s\.\,\;\:\?\!'%]")
 _MULTI_SPACE2 = re.compile(r'\s{2,}')
+_URLS = re.compile(r'https?://\S+')
+_HTML_TAGS = re.compile(r'<[^>]+>')
+_MARKDOWN_LINKS = re.compile(r'\[([^\]]*)\]\([^)]+\)')
+_EMAILS = re.compile(r'\S+@\S+\.\S+')
 
 _EN_STOPWORDS_PATH = str(importlib.resources.files('compressor').joinpath('resources/en_stopwords.pkl'))
 _PT_STOPWORDS_PATH = str(importlib.resources.files('compressor').joinpath('resources/pt_stopwords.pkl'))
+
+_DANGLING_PRONOUNS = {
+    'en': frozenset({'he', 'she', 'it', 'they', 'this', 'these', 'that', 'those'}),
+    'pt': frozenset({'ele', 'ela', 'eles', 'elas', 'isto', 'isso', 'aquilo',
+                     'este', 'esta', 'estes', 'estas', 'esse', 'essa', 'esses', 'essas',
+                     'aquele', 'aquela', 'aqueles', 'aquelas'}),
+}
+_CONJUNCTION_STARTERS = {
+    'en': frozenset({'and', 'but', 'so', 'or', 'nor', 'yet'}),
+    'pt': frozenset({'e', 'mas', 'ou', 'nem', 'porém', 'contudo', 'todavia'}),
+}
+_STITCH_SKIP_FIRST = {
+    'en': frozenset({
+        'however', 'but', 'yet', 'although', 'though', 'while',
+        'nevertheless', 'nonetheless', 'instead', 'rather', 'today',
+        'meanwhile', 'furthermore', 'moreover', 'additionally', 'also',
+        'besides', 'consequently', 'therefore', 'thus', 'hence',
+        'which', 'that', 'who', 'whom', 'whose', 'where', 'when', 'if',
+    }),
+    'pt': frozenset({
+        'embora', 'mas', 'porém', 'contudo', 'todavia', 'apesar',
+        'entretanto', 'hoje', 'assim', 'também', 'ainda', 'logo',
+        'afinal', 'portanto', 'consequentemente',
+        'que', 'quem', 'cujo', 'cuja', 'onde', 'quando',
+    }),
+}
+_STITCH_SKIP_FIRST_TWO = {
+    'en': frozenset({('even', 'though'), ('even', 'if'), ('in', 'addition')}),
+    'pt': frozenset({('no', 'entanto'), ('por', 'isso'), ('por', 'outro'),
+                     ('apesar', 'de'), ('mesmo', 'assim'), ('ainda', 'assim')}),
+}
+_CONNECTORS = {
+    'en': {
+        'small': ['Additionally, ', 'Moreover, ', 'Further, ', 'Besides, '],
+        'medium': ['Furthermore, ', 'In addition, ', 'On top of that, ', 'What is more, '],
+        'large': ['Meanwhile, ', 'On the other hand, ', 'Separately, ', 'In other developments, '],
+    },
+    'pt': {
+        'small': [
+            'Além disso, ',
+            'Também, ',
+            'Ainda, ',
+            'Assim, ',
+            'Porém, ',
+            'Contudo, ',
+            'Todavia, ',
+            'Logo, ',
+            'Afinal, ',
+        ],
+        'medium': [
+            'Do mesmo modo, ',
+            'Nesse sentido, ',
+            'Somado a isso, ',
+            'Da mesma forma, ',
+            'Nesse contexto, ',
+            'Diante disso, ',
+            'Com isso, ',
+            'Sendo assim, ',
+            'Desse modo, ',
+            'Dessa forma, ',
+            'Em seguida, ',
+            'Ao mesmo tempo, ',
+            'Por isso, ',
+            'Ainda assim, ',
+        ],
+        'large': [
+            'Por outro lado, ',
+            'Enquanto isso, ',
+            'Por sua vez, ',
+            'Já, ',
+            'Em contrapartida, ',
+            'No mesmo sentido, ',
+            'Além do mais, ',
+            'Em complemento, ',
+            'No mesmo contexto, ',
+            'Em consonância com isso, ',
+            'Nesse mesmo cenário, ',
+            'Sob essa perspectiva, ',
+            'Ao longo disso, ',
+            'Em linha com isso, ',
+        ]
+    }
+}
 
 
 @functools.lru_cache(maxsize=1)
@@ -97,7 +186,39 @@ def _get_sent_tokenize():
     return sent_tokenize
 
 
+def _filter_noise_lines(text):
+    lines = text.split('\n')
+    filtered = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        words = stripped.split()
+        if not words:
+            continue
+        first_word = words[0].lower().strip(':,;.!?')
+        if first_word.startswith('image') or first_word.startswith('imagem'):
+            continue
+        if first_word in ('title', 'url', 'published', 'markdown', 'home', 'busca', 'bate', 'email', 'anuncie', 'colunistas', 'expediente', 'parcerias', 'cookie', 'subscribe', 'newsletter', 'copyright', 'direitos'):
+            continue
+        if first_word == 'prompt' or (len(words) >= 2 and words[1].lower() == 'prompt'):
+            continue
+        if len(words) <= 2 and any(c.isdigit() for c in stripped):
+            continue
+        alpha = sum(1 for c in stripped if c.isalpha())
+        non_alpha = len(stripped) - alpha
+        if non_alpha > alpha * 2:
+            continue
+        filtered.append(stripped)
+    return '\n'.join(filtered)
+
+
 def clean_text(text: str) -> str:
+    text = _MARKDOWN_LINKS.sub(r'\1', text)
+    text = _EMAILS.sub(' ', text)
+    text = _URLS.sub(' ', text)
+    text = _HTML_TAGS.sub(' ', text)
+    text = _filter_noise_lines(text)
     text = _HYPHENATION.sub(r'\1\2', text)
     text = _NOISE_CHARS.sub(' ', text)
     text = _LEADING_HYPHEN.sub('', text)
@@ -113,6 +234,11 @@ def clean_text(text: str) -> str:
 
     text = _PUNCT_REATTACH.sub(r'\1', text)
     text = _PUNCT_BOUNDARY.sub(r'\1 ', text)
+    text = re.sub(r'\b(e)\s*\.\s*(g)\s*[.,]', 'e.g.', text)
+    text = re.sub(r'\b(i)\s*\.\s*(e)\s*[.,]', 'i.e.', text)
+    text = re.sub(r'(\d)\s*\.\s*(\d)', r'\1.\2', text)
+    text = re.sub(r'(?<![A-Za-z])\.(?:\s+\.)+', '.', text)
+    text = re.sub(r':\s*\.', ':', text)
     return text
 
 
@@ -167,21 +293,25 @@ def compute_and_remove_repeated_ngrams(text, ngram_size=3, threshold=3):
 
     for ng in repeated:
         first = True
+        new_words = []
         i = 0
-        while i <= len(words) - ngram_size:
-            if tuple(words[i:i + ngram_size]) == ng:
+        while i < n:
+            if i <= n - ngram_size and ngram_tuples[i] == ng:
                 if first:
+                    new_words.extend(words[i:i + ngram_size])
                     first = False
-                    i += ngram_size
-                else:
-                    del words[i:i + ngram_size]
+                i += ngram_size
             else:
+                new_words.append(words[i])
                 i += 1
+        words = new_words
+        n = len(words)
+        ngram_tuples = [tuple(words[i:i + ngram_size]) for i in range(n - ngram_size + 1)]
+
     return ' '.join(words)
 
 
 def calculate_similarity(embed1, embed2):
-    from sklearn.metrics.pairwise import cosine_similarity
     return cosine_similarity([embed1], [embed2])[0][0]
 
 
@@ -208,13 +338,48 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
         final_sentences = []
         for s in sentences:
             final_sentences.extend(s.split('\n'))
-        sentences = final_sentences
+        _FRAGMENT_STARTERS = frozenset({
+            'which', 'that', 'who', 'whom', 'whose', 'where', 'when', 'while',
+            'although', 'though', 'because', 'unless', 'until', 'after', 'before',
+            'if', 'whether', 'whereas', 'whereby',
+            'que', 'se', 'quando', 'enquanto', 'embora', 'caso', 'mesmo',
+        })
+        sentences = []
+        for s in final_sentences:
+            words = s.split()
+            if len(words) < 4:
+                continue
+            if not s[0].isalnum():
+                continue
+            first_word = words[0].lower().strip(',;:.!?')
+            if s[0].islower() and first_word in _FRAGMENT_STARTERS:
+                continue
+            caps_words = [w for w in words if len(w) > 1 and w.isupper()]
+            if len(caps_words) >= 3:
+                avg_len = sum(len(w) for w in caps_words) / len(caps_words)
+                if avg_len < 4.5 and len(caps_words) / max(len(words), 1) > 0.3:
+                    continue
+            sentences.append(s)
+        if not sentences:
+            sentences = final_sentences
         n_sentences = len(sentences)
+        if n_sentences == 0:
+            return full_text
 
         text_lang = detect_language(full_text)
         stopwords = _get_stopwords(text_lang)
 
-        if n_sentences >= 3:
+        dangling_pronouns = _DANGLING_PRONOUNS.get(text_lang, _DANGLING_PRONOUNS['en'])
+        conjunction_starters = _CONJUNCTION_STARTERS.get(text_lang, _CONJUNCTION_STARTERS['en'])
+        connector_pool = _CONNECTORS.get(text_lang, _CONNECTORS['en'])
+        connector_iters = {k: cycle(v) for k, v in connector_pool.items()}
+        stitch_skip_first = _STITCH_SKIP_FIRST.get(text_lang, _STITCH_SKIP_FIRST['en'])
+        stitch_skip_first_two = _STITCH_SKIP_FIRST_TWO.get(text_lang, _STITCH_SKIP_FIRST_TWO['en'])
+
+        sentence_words = [s.split() for s in sentences]
+        sentence_word_counts = [len(w) for w in sentence_words]
+
+        if n_sentences >= 6:
             n_topics = min(num_topics, max(2, n_sentences // 5))
             max_features = min(3000, max(500, n_sentences * 10))
 
@@ -224,7 +389,7 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', category=RuntimeWarning, message='.*divide by zero.*')
                 svd.fit(doc_term_matrix)
-            topic_scores = np.abs(svd.transform(vectorizer.transform(sentences)))
+            topic_scores = np.abs(svd.transform(doc_term_matrix))
         else:
             topic_scores = np.ones((n_sentences, 1)) * 0.5
 
@@ -237,43 +402,160 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
         sentence_embeddings = _get_embedding_model().encode(sentences)
 
         sentence_scores = []
-        for i, sentence in enumerate(sentences):
+        for i in range(n_sentences):
+            words = sentence_words[i]
             sentence_embedding = sentence_embeddings[i]
             semantic_similarity = calculate_similarity(doc_embedding, sentence_embedding)
 
             topic_importance = float(np.max(topic_scores[i]))
 
-            words = sentence.split()
-            unique_words = set(w.lower() for w in words if w.lower() not in stopwords)
-            lexical_diversity = len(unique_words) / len(words) if words else 0
+            unique_non_stop = set(w.lower() for w in words if w.lower() not in stopwords)
+            lexical_diversity = len(unique_non_stop) / max(len(words), 1)
 
-            importance = 0.6 * semantic_similarity + 0.3 * topic_importance + 0.2 * lexical_diversity
-            sentence_scores.append((sentence, importance))
+            position_weight = 1.0 + 0.05 * (1 - i / max(n_sentences - 1, 1))
+            importance = (0.6 * semantic_similarity + 0.3 * topic_importance + 0.2 * lexical_diversity) * position_weight
+
+            noise_penalty = 1.0
+            first_word = words[0].lower() if words else ''
+            if first_word.startswith('image') or first_word.startswith('imagem'):
+                noise_penalty = 0.7
+            importance *= noise_penalty
+
+            sentence_scores.append((sentences[i], importance, sentence_word_counts[i], i))
 
         sorted_sentences = sorted(sentence_scores, key=lambda x: x[1], reverse=True)
 
-        total_words = sum(len(s.split()) for s in sentences)
+        total_words = sum(sentence_word_counts)
         target_words = int(total_words * compression_rate)
 
-        compressed_text = []
+        kept_indices = set()
+        result_pairs = []
         current_words = 0
-        for sentence, _ in sorted_sentences:
-            sentence_words = len(sentence.split())
-            if current_words + sentence_words <= target_words:
-                compressed_text.append(sentence)
-                current_words += sentence_words
+        for sentence, _, word_count, idx in sorted_sentences:
+            if current_words + word_count <= target_words:
+                result_pairs.append((sentence, idx))
+                kept_indices.add(idx)
+                current_words += word_count
+            elif current_words < target_words:
+                remaining = target_words - current_words
+                if remaining >= 2:
+                    truncated = ' '.join(sentence_words[idx][:remaining])
+                    if truncated:
+                        result_pairs.append((truncated, idx))
+                        kept_indices.add(idx)
+                        current_words += remaining
+                break
             else:
                 break
 
-        if not compressed_text:
-            compressed_text = [sentences[0]]
+        if not result_pairs:
+            result_pairs = [(sentences[0], 0)]
+            kept_indices.add(0)
 
-        compressed_text.sort(key=lambda x: sentences.index(x))
-        compressed_text = [s.capitalize() for s in compressed_text]
+        result_pairs.sort(key=lambda x: x[1])
+        result_texts = [p[0] for p in result_pairs]
+        result_indices = [p[1] for p in result_pairs]
 
-        cleaned_compressed_text = ' '.join(compressed_text).replace('  ', ' ').strip()
-        cleaned_compressed_text = compute_and_remove_repeated_ngrams(cleaned_compressed_text)
-        return cleaned_compressed_text
+        deduped_texts = []
+        deduped_indices = []
+        for s, idx in zip(result_texts, result_indices):
+            words_s = set(w.lower() for w in s.split() if w.lower() not in stopwords)
+            is_dup = False
+            for existing in deduped_texts:
+                words_e = set(w.lower() for w in existing.split() if w.lower() not in stopwords)
+                if words_s and words_e:
+                    overlap = len(words_s & words_e) / max(len(words_s), len(words_e))
+                    if overlap > 0.55:
+                        is_dup = True
+                        break
+            if not is_dup:
+                deduped_texts.append(s)
+                deduped_indices.append(idx)
+        result_texts = deduped_texts
+        result_indices = deduped_indices
+
+        unused_candidates = [x for x in sorted_sentences if x[3] not in kept_indices]
+        filtered_texts = []
+        filtered_indices = []
+        for s, idx in zip(result_texts, result_indices):
+            first_word = s.split()[0].lower() if s.split() else ''
+            if first_word in dangling_pronouns and idx > 0 and (idx - 1) not in kept_indices:
+                for alt in unused_candidates:
+                    alt_s, _, _, alt_idx = alt
+                    if alt_s.split()[0].lower() not in dangling_pronouns:
+                        filtered_texts.append(alt_s)
+                        filtered_indices.append(alt_idx)
+                        kept_indices.add(alt_idx)
+                        unused_candidates = [x for x in unused_candidates if x[3] != alt_idx]
+                        break
+                else:
+                    filtered_texts.append(s)
+                    filtered_indices.append(idx)
+            else:
+                filtered_texts.append(s)
+                filtered_indices.append(idx)
+        result_texts = filtered_texts
+        result_indices = filtered_indices
+
+        result_texts = [s[0].upper() + s[1:] if s else s for s in result_texts]
+
+        fused_texts = []
+        fused_indices = []
+        i = 0
+        while i < len(result_texts):
+            curr_s = result_texts[i]
+            curr_idx = result_indices[i]
+            curr_words = curr_s.split()
+            if (i > 0 and curr_words and curr_words[0].lower() in conjunction_starters
+                    and curr_idx - result_indices[i - 1] == 1):
+                prev_s = fused_texts.pop()
+                prev_idx = fused_indices.pop()
+                if curr_words[0][0].isupper():
+                    curr_words[0] = curr_words[0][0].lower() + curr_words[0][1:]
+                merged = prev_s.rstrip('.!?') + ', ' + ' '.join(curr_words)
+                fused_texts.append(merged)
+                fused_indices.append(prev_idx)
+            else:
+                fused_texts.append(curr_s)
+                fused_indices.append(curr_idx)
+            i += 1
+        result_texts = fused_texts
+        result_indices = fused_indices
+
+        stitched_texts = [result_texts[0]]
+        for i in range(1, len(result_texts)):
+            gap = result_indices[i] - result_indices[i - 1]
+            if gap >= 4 and result_texts[i][0].isalpha():
+                curr_words = result_texts[i].split()
+                if curr_words:
+                    first_lower = curr_words[0].lower().strip(',;:.!?')
+                    first_two = (first_lower, curr_words[1].lower().strip(',;:.!?')) if len(curr_words) > 1 else None
+                    if first_lower in stitch_skip_first or (first_two and first_two in stitch_skip_first_two):
+                        stitched_texts.append(result_texts[i])
+                    else:
+                        if gap <= 6:
+                            connector = next(connector_iters['small'])
+                        elif gap <= 10:
+                            connector = next(connector_iters['medium'])
+                        else:
+                            connector = next(connector_iters['large'])
+                        curr_words[0] = curr_words[0][0].lower() + curr_words[0][1:]
+                        stitched_texts.append(connector + ' '.join(curr_words))
+                else:
+                    stitched_texts.append(result_texts[i])
+            else:
+                stitched_texts.append(result_texts[i])
+        result_texts = stitched_texts
+
+        cleaned = ' '.join(result_texts).replace('  ', ' ').strip()
+        cleaned = compute_and_remove_repeated_ngrams(cleaned)
+        cleaned = compute_and_remove_repeated_ngrams(cleaned, ngram_size=5, threshold=1)
+        cleaned = compute_and_remove_repeated_ngrams(cleaned, ngram_size=2, threshold=2)
+        cleaned = re.sub(r',\s*,', ',', cleaned)
+        cleaned = re.sub(r'\s+([,;:.!?])', r'\1', cleaned)
+        if cleaned and cleaned[-1] not in '.!?':
+            cleaned += '.'
+        return cleaned
     except Exception:
         traceback.print_exc()
     return full_text
