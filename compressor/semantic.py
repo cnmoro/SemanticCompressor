@@ -15,13 +15,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 _PUNCT_REATTACH = re.compile(r'\s+([.!,\?;:])')
 _PUNCT_BOUNDARY = re.compile(r'([.!,\?;:])(?=\S)')
 _HYPHENATION = re.compile(r'(\w)-\s*\n\s*(\w)')
-_NOISE_CHARS = re.compile(r'[\|\•\[\]\(\)\"“”]')
+_NOISE_CHARS = re.compile(r'[\|\•\*“”]')
 _LEADING_HYPHEN = re.compile(r'(?m)^\s*-\s*')
 _STRAY_HYPHEN = re.compile(r'(?<!\w)-(?!\w)')
 _REPEATED_PUNCT = re.compile(r'([!?.,;:]){2,}')
 _MULTI_SPACE = re.compile(r'[ \t]+')
 _MULTI_NEWLINE = re.compile(r'\n{2,}')
-_AGGRESSIVE_CLEAN = re.compile(r"[^A-Za-zÀ-ÿ0-9\s\.\,\;\:\?\!'%]")
+_AGGRESSIVE_CLEAN = re.compile(r'[^A-Za-zÀ-ÿ0-9\s\.\,\;\:\?\!\"\'%\\\$_\{\}\[\]\(\)\#\@\<\>\-\+\=\/\^]')
 _MULTI_SPACE2 = re.compile(r'\s{2,}')
 _URLS = re.compile(r'https?://\S+')
 _HTML_TAGS = re.compile(r'<[^>]+>')
@@ -237,6 +237,7 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\b(e)\s*\.\s*(g)\s*[.,]', 'e.g.', text)
     text = re.sub(r'\b(i)\s*\.\s*(e)\s*[.,]', 'i.e.', text)
     text = re.sub(r'(\d)\s*\.\s*(\d)', r'\1.\2', text)
+    text = re.sub(r'(\d)\s*:\s*(\d)', r'\1:\2', text)
     text = re.sub(r'(?<![A-Za-z])\.(?:\s+\.)+', '.', text)
     text = re.sub(r':\s*\.', ':', text)
     return text
@@ -329,6 +330,9 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
     import traceback
 
     try:
+        code_blocks = re.findall(r'```(\w*)\n(.*?)```', full_text, re.DOTALL)
+        full_text = re.sub(r'```(\w*)\n.*?```', '', full_text, flags=re.DOTALL)
+
         if perform_cleaning:
             full_text = clean_text(full_text)
 
@@ -497,7 +501,10 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
         result_texts = filtered_texts
         result_indices = filtered_indices
 
-        result_texts = [s[0].upper() + s[1:] if s else s for s in result_texts]
+        if result_texts and result_texts[0]:
+            first_word = result_texts[0].split()[0].lower() if result_texts[0].split() else ''
+            if first_word not in {'def', 'class', 'import', 'from', 'return', 'if', 'for', 'while'}:
+                result_texts[0] = result_texts[0][0].upper() + result_texts[0][1:]
 
         fused_texts = []
         fused_indices = []
@@ -555,6 +562,11 @@ def semantic_compress_text(full_text, compression_rate=0.7, num_topics=5, refere
         cleaned = re.sub(r'\s+([,;:.!?])', r'\1', cleaned)
         if cleaned and cleaned[-1] not in '.!?':
             cleaned += '.'
+        if code_blocks:
+            code_section = '\n\n'.join(
+                f'```{lang}\n{block.strip()}\n```' for lang, block in code_blocks
+            )
+            cleaned += '\n\n' + code_section
         return cleaned
     except Exception:
         traceback.print_exc()

@@ -17,8 +17,6 @@ class TestCleanText:
         result = clean_text(sample_text_noisy)
         assert "|" not in result
         assert "•" not in result
-        assert "[" not in result
-        assert "]" not in result
 
     def test_hyphenation_fix(self, sample_text_hyphenated):
         result = clean_text(sample_text_hyphenated)
@@ -50,15 +48,17 @@ class TestCleanText:
         assert result == "Line one.\nLine two."
 
     def test_very_noisy_text_aggressive_cleanup(self):
-        text = "NorMal text || with pipe &&& and other }}}}{{{{ junk chars!!!"
+        text = "NorMal text || with pipe and other ±±± junk chars™™™"
         result = clean_text(text)
         assert "||" not in result
-        assert "&&&" not in result
+        assert "±" not in result
+        assert "™" not in result
 
     def test_aggressive_cleanup_low_alpha_ratio(self):
-        text = "@@@ ### $$$ %%% ^^^ Normal text here."
+        text = "±±± ™™™ ®®® Normal text here."
         result = clean_text(text)
-        assert "@@@" not in result
+        assert "±" not in result
+        assert "®" not in result
 
     def test_empty_string(self):
         assert clean_text("") == ""
